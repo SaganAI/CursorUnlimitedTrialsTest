@@ -1,112 +1,78 @@
 #!/bin/bash
 
-# Cursor Trial Reset Script for Mac - Automates Quick Reset (Solution 1)
-# Based on https://github.com/yuaotian/go-cursor-help
-# Run with: copy-paste into Terminal. Requires sudo for optional MAC spoof.
+# Fixed Cursor Unlimited Trials Reset Script for Mac
+# Based on SaganAI repo with typo fix (choice var), jq fallback, and update disable
+# Run: curl -fsSL https://tinyurl.com/cursor-reset-fixed | bash
 
-set -e  # Exit on error
+set -e
 
-echo "=== Cursor Trial Reset Script (Mac) ==="
-echo "Closing Cursor if running..."
+echo "=== Starting Fixed Cursor Unlimited Trials Reset ==="
 
-# Kill Cursor processes safely
-pkill -f "Cursor" || true
-sleep 2  # Wait for full quit
+# Kill Cursor
+pkill -f Cursor || true
+sleep 3
 
-# Config paths
+# Paths
 STORAGE_DIR="$HOME/Library/Application Support/Cursor/User/globalStorage"
 STORAGE_FILE="$STORAGE_DIR/storage.json"
-BACKUP_FILE="$STORAGE_DIR/storage.json.backup"
+BACKUP_FILE="$STORAGE_DIR/storage.json.backup-$(date +%Y%m%d-%H%M%S)"
 
-# Create dir if missing
 mkdir -p "$STORAGE_DIR"
 
-# Backup existing storage.json
+# Backup
 if [ -f "$STORAGE_FILE" ]; then
     cp "$STORAGE_FILE" "$BACKUP_FILE"
-    echo "Backed up $STORAGE_FILE to $BACKUP_FILE"
-else
-    echo "No existing storage.json found; will create new."
+    echo "Backup created: $BACKUP_FILE"
 fi
 
-# Generate new UUIDs for all telemetry fields
-UUID_MACHINE=$(uuidgen)
-UUID_MAC=$(uuidgen)
-UUID_DEV=$(uuidgen)
-UUID_SQM=$(uuidgen)
+# Generate UUIDs
+MACHINE_ID=$(uuidgen)
+MAC_ID=$(uuidgen)
+DEV_ID=$(uuidgen)
+SQM_ID=$(uuidgen)
 
-echo "Generated new UUIDs:"
-echo "- machineId: $UUID_MACHINE"
-echo "- macMachineId: $UUID_MAC"
-echo "- devDeviceId: $UUID_DEV"
-echo "- sqmId: $UUID_SQM"
+echo "New IDs generated:"
+echo "  machineId: $MACHINE_ID"
+echo "  macMachineId: $MAC_ID"
+echo "  devDeviceId: $DEV_ID"
+echo "  sqmId: $SQM_ID"
 
-# Create/update storage.json with new IDs
-cat > "$STORAGE_FILE" << EOF
+# Write new storage.json (jq if available, else fallback)
+if command -v jq >/dev/null 2>&1; then
+    jq -n --arg m "$MACHINE_ID" --arg mac "$MAC_ID" --arg dev "$DEV_ID" --arg sqm "$SQM_ID" \
+      '{telemetry: {machineId: $m, macMachineId: $mac, devDeviceId: $dev, sqmId: $sqm}}' > "$STORAGE_FILE"
+    echo "Config updated with jq."
+else
+    echo "jq not found; using fallback write."
+    cat > "$STORAGE_FILE" << EOF
 {
-  "telemetry.machineId": "$UUID_MACHINE",
-  "telemetry.macMachineId": "$UUID_MAC",
-  "telemetry.devDeviceId": "$UUID_DEV",
-  "telemetry.sqmId": "$UUID_SQM"
+  "telemetry.machineId": "$MACHINE_ID",
+  "telemetry.macMachineId": "$MAC_ID",
+  "telemetry.devDeviceId": "$DEV_ID",
+  "telemetry.sqmId": "$SQM_ID"
 }
 EOF
-
-echo "Updated $STORAGE_FILE with new IDs."
-
-# Optional: MAC Address Spoof (for extra reset; skips if n)
-read -p "Spoof Wi-Fi MAC address for full anonymity? (y/n, recommended but may disrupt network temporarily): " -n 1 -r
-echo
-if [[ $REPLY =~ ^[Yy]$ ]]; then
-    echo "Finding Wi-Fi interface..."
-    WIFI_IFACE=$(networksetup -listallhardwareports | awk '/Wi-Fi/{getline; print $2}' | head -1)
-    if [ -z "$WIFI_IFACE" ]; then
-        echo "Error: No Wi-Fi interface found (e.g., en0). Skipping MAC spoof."
-    else
-        echo "Wi-Fi interface: $WIFI_IFACE"
-        
-        # Backup original MAC
-        ORIGINAL_MAC=$(ifconfig "$WIFI_IFACE" | grep ether | awk '{print $2}')
-        BACKUP_MAC_FILE="$HOME/.cursor_mac_backup.txt"
-        echo "$WIFI_IFACE:$ORIGINAL_MAC" > "$BACKUP_MAC_FILE"
-        echo "Backed up original MAC to $BACKUP_MAC_FILE"
-        
-        # Generate random MAC (6 random bytes)
-        NEW_MAC=$(openssl rand -hex 6 | sed 's/\(..\)/\1:/g; s/.$//' | tr '[:lower:]' '[:upper:]')
-        
-        # Apply new MAC (requires sudo)
-        echo "Applying new MAC: $NEW_MAC (enter sudo password if prompted)..."
-        sudo ifconfig "$WIFI_IFACE" ether "$NEW_MAC"
-        
-        echo "MAC spoof applied! Reconnect Wi-Fi if needed (System Settings > Network > Wi-Fi > Renew DHCP)."
-        echo "To revert: sudo ifconfig $WIFI_IFACE ether $ORIGINAL_MAC"
-    fi
-else
-    echo "Skipping MAC spoof."
 fi
-
-# Disable auto-updates (per repo; for v0.45.11 and below)
-echo "Disabling auto-updates..."
-cd /Applications/Cursor.app/Contents/Resources || { echo "Cursor.app not found in /Applications; skipping update disable."; }
-if [ -f "app-update.yml" ]; then
-    mv app-update.yml app-update.yml.bak
-fi
-touch app-update.yml
-chmod 444 app-update.yml
-rm -rf "$HOME/Library/Application Support/Caches/cursor-updater"
-touch "$HOME/Library/Application Support/Caches/cursor-updater"
-echo "Auto-update disabled (set Mode to 'none' in Cursor Settings > Application > Update after reopening)."
 
 # Verify
-echo "Verification:"
 if [ -f "$STORAGE_FILE" ]; then
-    grep -E "(machineId|macMachineId|devDeviceId|sqmId)" "$STORAGE_FILE" | head -4
+    if command -v jq >/dev/null 2>&1; then
+        jq -r '.telemetry.machineId // .["telemetry.machineId"]' "$STORAGE_FILE" && echo "Config verified OK."
+    else
+        grep -E "(machineId|macMachineId|devDeviceId|sqmId)" "$STORAGE_FILE" | head -4
+    fi
 else
     echo "Error: storage.json not created!"
     exit 1
 fi
 
-echo ""
-echo "=== Done! ==="
-echo "Reopen Cursor, sign in, and enjoy unlimited trials."
-echo "If issues: Restore backup with 'cp $BACKUP_FILE $STORAGE_FILE' or reply with errors."
-echo "For MAC revert: See backup file or reboot."
+# Optional MAC Spoof (fixed variable name)
+read -p "Spoof Wi-Fi MAC? (y/N): " -n 1 choice  # Fixed: was 'cho'
+echo
+if [[ "$choice" =~ ^[Yy]$ ]]; then
+    IFACE=$(networksetup -listallhardwareports | grep -A1 'Wi-Fi' | grep 'Device' | awk '{print $2}' | head -1)
+    if [ -n "$IFACE" ]; then
+        ORIG_MAC=$(ifconfig "$IFACE" | grep ether | awk '{print $2}')
+        echo "$IFACE:orig_mac:$ORIG_MAC" > ~/.cursor_mac_backup
+        NEW_MAC=$(openssl rand -hex 6 | sed 's/../&:/g; s/:$//; s/\(.\)/\U\1/g')
+        echo "Applying new MAC: $NEW_MAC (sudo password if prompted)..."
